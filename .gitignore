@@ -54,3 +54,4 @@ src/urh/URHProject.xml
 src/urh/dev/gr/scripts/top_block.py
 
 misc/*
+/.project
