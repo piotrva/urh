@@ -8,6 +8,7 @@ Initializer.init_path()
 from gnuradio import blocks
 from gnuradio import gr
 import osmosdr
+import limesdr
 
 
 class top_block(gr.top_block):
@@ -15,6 +16,7 @@ class top_block(gr.top_block):
     def __init__(self, sample_rate, frequency, freq_correction, rf_gain, if_gain, bb_gain, bandwidth, port):
         gr.top_block.__init__(self, "Top Block")
 
+        self.driverLime = False  # set driver flavour - gr-limesdr allows for better gain setting
         self.sample_rate = sample_rate
         self.rf_gain = rf_gain
         self.port = port
@@ -24,35 +26,54 @@ class top_block(gr.top_block):
         self.bb_gain = bb_gain
         self.bandwidth = bandwidth
 
-        self.osmosdr_sink_0 = osmosdr.sink(
-            args="numchan=" + str(1) + " " + 'driver=lime,soapy=0'
-        )
-        #self.osmosdr_sink_0.set_time_unknown_pps(osmosdr.time_spec_t())
-        self.osmosdr_sink_0.set_sample_rate(sample_rate)
-        self.osmosdr_sink_0.set_center_freq(frequency, 0)
-        self.osmosdr_sink_0.set_freq_corr(freq_correction, 0)
-        self.osmosdr_sink_0.set_gain(rf_gain, 0)
-        self.osmosdr_sink_0.set_if_gain(if_gain, 0)
-        self.osmosdr_sink_0.set_bb_gain(bb_gain, 0)
-        self.osmosdr_sink_0.set_antenna('BAND2', 0)
-        self.osmosdr_sink_0.set_bandwidth(bandwidth, 0)
-        self.blocks_udp_source_0 = blocks.udp_source(gr.sizeof_gr_complex * 1, '127.0.0.1', port, 65536, False)
+        self.blocks_udp_source_0 = blocks.udp_source(gr.sizeof_gr_complex * 1, '127.0.0.1', port, 1472*4, False)
+        if self.driverLime:
+            self.limesdr_sink_0 = limesdr.sink('', 0, '', '')
+            self.limesdr_sink_0.set_sample_rate(sample_rate)
+            self.limesdr_sink_0.set_center_freq(frequency, 0)
+            self.limesdr_sink_0.set_bandwidth(bandwidth, 0)
+            self.limesdr_sink_0.set_digital_filter(sample_rate, 0)
+            self.limesdr_sink_0.set_gain(rf_gain, 0)
+            self.limesdr_sink_0.set_antenna(2, 0)  # BAND2 antenna for LimeSDR mini
+            self.limesdr_sink_0.calibrate(2.5e6, 0)
 
-        self.connect((self.blocks_udp_source_0, 0), (self.osmosdr_sink_0, 0))
+            self.connect((self.blocks_udp_source_0, 0), (self.limesdr_sink_0, 0))
+        else:
+            self.osmosdr_sink_0 = osmosdr.sink(
+                args="numchan=" + str(1) + " " + 'driver=lime,soapy=0'
+            )
+            #self.osmosdr_sink_0.set_time_unknown_pps(osmosdr.time_spec_t())
+            self.osmosdr_sink_0.set_sample_rate(sample_rate)
+            self.osmosdr_sink_0.set_center_freq(frequency, 0)
+            self.osmosdr_sink_0.set_freq_corr(freq_correction, 0)
+            self.osmosdr_sink_0.set_gain(rf_gain, 0)
+            self.osmosdr_sink_0.set_if_gain(if_gain, 0)
+            self.osmosdr_sink_0.set_bb_gain(bb_gain, 0)
+            self.osmosdr_sink_0.set_antenna('BAND2', 0)
+            self.osmosdr_sink_0.set_bandwidth(bandwidth, 0)
+
+            self.connect((self.blocks_udp_source_0, 0), (self.osmosdr_sink_0, 0))
 
     def get_sample_rate(self):
         return self.sample_rate
 
     def set_sample_rate(self, sample_rate):
         self.sample_rate = sample_rate
-        self.osmosdr_sink_0.set_sample_rate(self.sample_rate)
+        if self.driverLime:
+            self.limesdr_sink_0.set_sample_rate(self.sample_rate)
+            self.limesdr_sink_0.set_digital_filter(self.sample_rate, 0)
+        else:
+            self.osmosdr_sink_0.set_sample_rate(self.sample_rate)
 
     def get_rf_gain(self):
         return self.rf_gain
 
     def set_rf_gain(self, rf_gain):
         self.rf_gain = rf_gain
-        self.osmosdr_sink_0.set_gain(self.rf_gain, 0)
+        if self.driverLime:
+            self.limesdr_sink_0.set_gain(self.rf_gain, 0)
+        else:
+            self.osmosdr_sink_0.set_gain(self.rf_gain, 0)
 
     def get_port(self):
         return self.port
@@ -65,21 +86,26 @@ class top_block(gr.top_block):
 
     def set_if_gain(self, if_gain):
         self.if_gain = if_gain
-        self.osmosdr_sink_0.set_if_gain(self.if_gain, 0)
+        if not self.driverLime:
+            self.osmosdr_sink_0.set_if_gain(self.if_gain, 0)
 
     def get_frequency(self):
         return self.frequency
 
     def set_frequency(self, frequency):
         self.frequency = frequency
-        self.osmosdr_sink_0.set_center_freq(self.frequency, 0)
+        if self.driverLime:
+            self.limesdr_sink_0.set_center_freq(self.frequency, 0)
+        else:
+            self.osmosdr_sink_0.set_center_freq(self.frequency, 0)
 
     def get_freq_correction(self):
         return self.freq_correction
 
     def set_freq_correction(self, freq_correction):
         self.freq_correction = freq_correction
-        self.osmosdr_sink_0.set_freq_corr(self.freq_correction, 0)
+        if not self.driverLime:
+            self.osmosdr_sink_0.set_freq_corr(self.freq_correction, 0)
 
     def get_direct_sampling_mode(self):
         return self.direct_sampling_mode
@@ -98,14 +124,18 @@ class top_block(gr.top_block):
 
     def set_bb_gain(self, bb_gain):
         self.bb_gain = bb_gain
-        self.osmosdr_sink_0.set_bb_gain(self.bb_gain, 0)
+        if not self.driverLime:
+            self.osmosdr_sink_0.set_bb_gain(self.bb_gain, 0)
 
     def get_bandwidth(self):
         return self.bandwidth
 
     def set_bandwidth(self, bandwidth):
         self.bandwidth = bandwidth
-        self.osmosdr_sink_0.set_bandwidth(self.bandwidth, 0)
+        if self.driverLime:
+            self.limesdr_sink_0.set_bandwidth(self.bandwidth, 0)
+        else:
+            self.osmosdr_sink_0.set_bandwidth(self.bandwidth, 0)
 
     def get_antenna_index(self):
         return self.antenna_index
