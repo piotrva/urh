@@ -7,9 +7,11 @@ from cython.view cimport array as cvarray  # needed for converting of malloc arr
 from urh.util.Logger import logger
 
 cdef lms_device_t *_c_device
-cdef lms_stream_t stream
+cdef lms_stream_t stream_tx
+cdef lms_stream_t stream_rx
 
-cpdef size_t CHANNEL = 0
+cpdef size_t CHANNEL_TX = 0
+cpdef size_t CHANNEL_RX = 0
 cpdef bool IS_TX = False
 
 cpdef set_tx(bool is_tx):
@@ -19,13 +21,21 @@ cpdef set_tx(bool is_tx):
 cpdef bool get_tx():
     return IS_TX
 
-cpdef set_channel(size_t channel):
-    global CHANNEL
-    CHANNEL = <size_t>channel
+cpdef set_channel_tx(size_t channel):
+    global CHANNEL_TX
+    CHANNEL_TX = <size_t>channel
     return 0
 
-cpdef size_t get_channel():
-    return CHANNEL
+cpdef set_channel_rx(size_t channel):
+    global CHANNEL_RX
+    CHANNEL_RX = <size_t>channel
+    return 0
+
+cpdef size_t get_channel_tx():
+    return CHANNEL_TX
+
+cpdef size_t get_channel_rx():
+    return CHANNEL_RX
 
 
 cpdef list get_device_list():
@@ -97,9 +107,6 @@ cpdef int enable_channel(bool enabled, bool is_tx, size_t channel):
     """
     return LMS_EnableChannel(_c_device, is_tx, channel, enabled)
 
-cpdef int disable_current_channel():
-    return enable_channel(False, IS_TX, CHANNEL)
-
 cpdef enable_all_channels():
     enable_channel(True, False, 0)
     enable_channel(True, False, 1)
@@ -125,22 +132,6 @@ cpdef int set_sample_rate(float_type rate, size_t oversample=0):
     """
     LMS_SetSampleRate(_c_device, rate, oversample)
 
-cpdef tuple get_sample_rate():
-    """
-    Get the sampling rate of the specified LMS device RX or TX channel.
-    The function obtains the sample rate used in data interface with the host and
-    the RF sample rate used by DAC/ADC.
-    :return: tuple of host_Hz, rf_Hz or tuple -1,-1 on Error
-    """
-    cdef float_type host_hz = 0.0  # sampling rate used for data exchange with the host
-    cdef float_type rf_hz = 0.0  # RF sampling rate in Hz
-
-    result = LMS_GetSampleRate(_c_device, IS_TX, CHANNEL, &host_hz, &rf_hz)
-    if result == 0:
-        return host_hz, rf_hz
-    else:
-        return -1, -1
-
 cpdef tuple get_sample_rate_range():
     """
     Get the range of supported sampling rates.
@@ -153,27 +144,23 @@ cpdef tuple get_sample_rate_range():
     else:
         return -1, -1, -1
 
-cpdef int set_center_frequency(float_type frequency):
+cpdef int set_center_frequency_tx(float_type frequency):
     """
     Set RF center frequency in Hz. This automatically selects the appropriate
     antenna (band path) for the desired frequency. In order to override antenna selection use LMS_SetAntenna().
     :param frequency: Desired RF center frequency in Hz
     :return: 0 on success, (-1) on failure
     """
-    return LMS_SetLOFrequency(_c_device, IS_TX, CHANNEL, frequency)
+    return LMS_SetLOFrequency(_c_device, True, CHANNEL_TX, frequency)
 
-cpdef float_type get_center_frequency():
+cpdef int set_center_frequency_rx(float_type frequency):
     """
-    Obtain the current RF center frequency in Hz.
-    
-    :return: Current RF center frequency in Hz on success, (-1) on failure
+    Set RF center frequency in Hz. This automatically selects the appropriate
+    antenna (band path) for the desired frequency. In order to override antenna selection use LMS_SetAntenna().
+    :param frequency: Desired RF center frequency in Hz
+    :return: 0 on success, (-1) on failure
     """
-    cdef float_type frequency = 0.0
-    result = LMS_GetLOFrequency(_c_device, IS_TX, CHANNEL, &frequency)
-    if result == 0:
-        return frequency
-    else:
-        return -1
+    return LMS_SetLOFrequency(_c_device, False, CHANNEL_RX, frequency)
 
 cpdef tuple get_center_frequency_range():
     """
@@ -188,7 +175,7 @@ cpdef tuple get_center_frequency_range():
     else:
         return -1, -1, -1
 
-cpdef int set_normalized_gain(float_type gain):
+cpdef int set_normalized_gain_tx(float_type gain):
     """
     Set the combined gain value
     
@@ -198,22 +185,37 @@ cpdef int set_normalized_gain(float_type gain):
     :param gain: Desired gain, range [0, 1.0], where 1.0 represents the maximum gain
     :return:  0 on success, (-1) on failure
     """
-    return LMS_SetNormalizedGain(_c_device, IS_TX, CHANNEL, gain)
+    return LMS_SetNormalizedGain(_c_device, True, CHANNEL_TX, gain)
 
-cpdef float_type get_normalized_gain():
+cpdef int set_normalized_gain_rx(float_type gain):
+    """
+    Set the combined gain value
+
+    This function computes and sets the optimal gain values of various amplifiers
+    that are present in the device based on desired normalized gain value.
+
+    :param gain: Desired gain, range [0, 1.0], where 1.0 represents the maximum gain
+    :return:  0 on success, (-1) on failure
+    """
+    return LMS_SetNormalizedGain(_c_device, False, CHANNEL_RX, gain)
+
+cpdef float_type get_normalized_gain(bool is_tx):
     """
     Obtain the current combined gain value
     
     :return: Current gain, range [0, 1.0], where 1.0 represents the maximum gain, or -1 on error
     """
     cdef float_type gain = 0.0
-    result = LMS_GetNormalizedGain(_c_device, IS_TX, CHANNEL, &gain)
+    if is_tx:
+        result = LMS_GetNormalizedGain(_c_device, True, CHANNEL_TX, &gain)
+    else:
+        result = LMS_GetNormalizedGain(_c_device, False, CHANNEL_RX, &gain)
     if result == 0:
         return gain
     else:
         return -1
 
-cpdef int set_lpf_bandwidth(float_type bandwidth):
+cpdef int set_lpf_bandwidth_tx(float_type bandwidth):
     """
     Configure analog LPF of the LMS chip for the desired RF bandwidth.
     This function automatically enables LPF.
@@ -221,63 +223,34 @@ cpdef int set_lpf_bandwidth(float_type bandwidth):
     :param bandwidth: LPF bandwidth in Hz
     :return: 0 on success, (-1) on failure
     """
-    return LMS_SetLPFBW(_c_device, IS_TX, CHANNEL, bandwidth)
+    return LMS_SetLPFBW(_c_device, True, CHANNEL_TX, bandwidth)
 
-cpdef float_type get_lpf_bandwidth():
+cpdef int set_lpf_bandwidth_rx(float_type bandwidth):
     """
-    Get the currently configured analog LPF RF bandwidth.
-    
-    :return: Current LPF bandwidth in Hz on success, (-1) on failure
-    """
-    cdef float_type bandwidth = 0.0
-    result = LMS_GetLPFBW(_c_device, IS_TX, CHANNEL, &bandwidth)
-    if result == 0:
-        return bandwidth
-    else:
-        return -1
+    Configure analog LPF of the LMS chip for the desired RF bandwidth.
+    This function automatically enables LPF.
 
-cpdef get_lpf_bandwidth_range():
-    """
-    Get the RF bandwidth setting range supported by the analog LPF of LMS chip
-    
-    :return: Tuple (start, end, step) of allowed bandwidth values in Hz, (-1, -1, -1) on Error
-    """
-    cdef lms_range_t bandwidth_range
-    result = LMS_GetLPFBWRange(_c_device, IS_TX, &bandwidth_range)
-    if result == 0:
-        return bandwidth_range.min, bandwidth_range.max, bandwidth_range.step
-    else:
-        return -1, -1, -1
-
-cpdef calibrate(double bw):
-    """
-    Perform the automatic calibration of specified RX/TX channel. The automatic
-    calibration must be run after device configuration is finished because
-    calibration values are dependent on various configuration settings.
-
-    automatic RX calibration is not available when RX_LNA_H path is
-    selected
-
-    Device should be configured
-    
-    :param bw: bandwidth
+    :param bandwidth: LPF bandwidth in Hz
     :return: 0 on success, (-1) on failure
     """
-    return LMS_Calibrate(_c_device, IS_TX, CHANNEL, bw, 0)
+    return LMS_SetLPFBW(_c_device, False, CHANNEL_RX, bandwidth)
 
-cpdef list get_antenna_list():
+cpdef list get_antenna_list(bool is_tx):
     """
     Obtain antenna list with names. First item in the list is the name of antenna index 0.
     :return: 
     """
     cdef lms_name_t *ant_list = <lms_name_t *> malloc(256 * sizeof(lms_name_t))
-    result = LMS_GetAntennaList(_c_device, IS_TX, CHANNEL, ant_list)
+    if is_tx:
+        result = LMS_GetAntennaList(_c_device, True, CHANNEL_TX, ant_list)
+    else:
+        result = LMS_GetAntennaList(_c_device, False, CHANNEL_RX, ant_list)
     if result > 0:
         return [ant_list[i].decode('UTF-8') for i in range(0, result)]
     else:
         return []
 
-cpdef int set_antenna(size_t index):
+cpdef int set_antenna_tx(size_t index):
     """
     Select the antenna for the specified RX or TX channel.
     
@@ -286,38 +259,29 @@ cpdef int set_antenna(size_t index):
     :param index: Index of antenna to select
     :return: 0 on success, (-1) on failure
     """
-    return LMS_SetAntenna(_c_device, IS_TX, CHANNEL, index)
+    return LMS_SetAntenna(_c_device, True, CHANNEL_TX, index)
 
-cpdef int get_antenna():
+cpdef int set_antenna_rx(size_t index):
+    """
+    Select the antenna for the specified RX or TX channel.
+
+    LMS_SetFrequency() automatically selects antenna based on frequency.
+    This function is meant to override path selected by LMS_SetFrequency() and should be called after LMS_SetFrequency().
+    :param index: Index of antenna to select
+    :return: 0 on success, (-1) on failure
+    """
+    return LMS_SetAntenna(_c_device, False, CHANNEL_RX, index)
+
+cpdef int get_antenna(bool is_tx):
     """
     Obtain currently selected antenna of the the specified RX or TX channel.
      
     :return: Index of selected antenna on success, (-1) on failure
     """
-    return LMS_GetAntenna(_c_device, IS_TX, CHANNEL)
-
-cpdef tuple get_antenna_bw(size_t index):
-    """
-    Obtains bandwidth (lower and upper frequency) of the specified antenna
-
-    :param index: Antenna index
-    :return: Tuple (start, end, step) of allowed bandwidth values in Hz, (-1, -1, -1) on Error
-    """
-    cdef lms_range_t bandwidth_range
-    result = LMS_GetAntennaBW(_c_device, IS_TX, CHANNEL, index, &bandwidth_range)
-    if result == 0:
-        return bandwidth_range.min, bandwidth_range.max, bandwidth_range.step
+    if is_tx:
+        return LMS_GetAntenna(_c_device, True, CHANNEL_TX)
     else:
-        return -1, -1, -1
-
-cpdef tuple get_nco_frequency():
-    cdef float_type freq = 0.0
-    cdef float_type pho = 0.0
-    result = LMS_GetNCOFrequency(_c_device, IS_TX, CHANNEL, &freq, &pho)
-    if result == 0:
-        return freq, pho
-    else:
-        return -1, 1
+        return LMS_GetAntenna(_c_device, False, CHANNEL_RX)
 
 cpdef float_type get_clock_freq(size_t clk_id):
     cdef float_type clock_hz = 0.0
@@ -343,43 +307,43 @@ cpdef float_type get_chip_temperature():
     else:
         return -1
 
-cpdef int setup_stream(uint32_t fifo_size):
+cpdef int setup_stream_tx(uint32_t fifo_size):
     """
     Create new stream based on parameters passed in configuration structure.
     The structure is initialized with stream handle.
     :param fifo_size: FIFO size (in samples) used by stream.
     :return: 0 on success, (-1) on failure
     """
-    stream.isTx = IS_TX
-    stream.channel = <uint32_t> CHANNEL
-    stream.fifoSize = fifo_size
-    stream.dataFmt = dataFmt_t.LMS_FMT_F32
-    stream.throughputVsLatency = 0.0  # optimize for minimum latency
+    stream_tx.isTx = True
+    stream_tx.channel = <uint32_t> CHANNEL_TX
+    stream_tx.fifoSize = fifo_size
+    stream_tx.dataFmt = dataFmt_t.LMS_FMT_F32
+    stream_tx.throughputVsLatency = 0.0  # optimize for minimum latency
 
-    return LMS_SetupStream(_c_device, &stream)
+    return LMS_SetupStream(_c_device, &stream_tx)
 
-cpdef int destroy_stream():
+cpdef int destroy_stream_tx():
     """
     Deallocate memory used for stream.
     :return: 0 on success, (-1) on failure
     """
-    LMS_DestroyStream(_c_device, &stream)
+    LMS_DestroyStream(_c_device, &stream_tx)
 
-cpdef int start_stream():
+cpdef int start_stream_tx():
     """
     Start stream 
     :return: 0 on success, (-1) on failure
     """
-    return LMS_StartStream(&stream)
+    return LMS_StartStream(&stream_tx)
 
-cpdef int stop_stream():
+cpdef int stop_stream_tx():
     """
     Stop stream
     :return: 0 on success, (-1) on failure
     """
-    return LMS_StopStream(&stream)
+    return LMS_StopStream(&stream_tx)
 
-cpdef int recv_stream(connection, unsigned num_samples, unsigned timeout_ms):
+cpdef int recv_stream_tx(connection, unsigned num_samples, unsigned timeout_ms):
     """
     Read samples from the FIFO of the specified stream.
     Sample buffer must be big enough to hold requested number of samples.
@@ -395,7 +359,7 @@ cpdef int recv_stream(connection, unsigned num_samples, unsigned timeout_ms):
     if not buff:
         raise MemoryError()
 
-    cdef int received_samples = LMS_RecvStream(&stream, buff, num_samples, &meta, timeout_ms)
+    cdef int received_samples = LMS_RecvStream(&stream_tx, buff, num_samples, &meta, timeout_ms)
 
     if received_samples > 0:
         connection.send_bytes(<float[:2*received_samples]>buff)
@@ -404,7 +368,7 @@ cpdef int recv_stream(connection, unsigned num_samples, unsigned timeout_ms):
 
     free(buff)
 
-cpdef int send_stream(float[::1] samples, unsigned timeout_ms):
+cpdef int send_stream_tx(float[::1] samples, unsigned timeout_ms):
     """
     Write samples to the FIFO of the specified stream.
     
@@ -418,7 +382,86 @@ cpdef int send_stream(float[::1] samples, unsigned timeout_ms):
     cdef size_t sample_count = len(samples) // 2
 
     if len(samples) > 0:
-        return LMS_SendStream(&stream, &samples[0], sample_count, &meta, timeout_ms)
+        return LMS_SendStream(&stream_tx, &samples[0], sample_count, &meta, timeout_ms)
+    else:
+        return -1
+
+cpdef int setup_stream_rx(uint32_t fifo_size):
+    """
+    Create new stream based on parameters passed in configuration structure.
+    The structure is initialized with stream handle.
+    :param fifo_size: FIFO size (in samples) used by stream.
+    :return: 0 on success, (-1) on failure
+    """
+    stream_rx.isTx = False
+    stream_rx.channel = <uint32_t> CHANNEL_RX
+    stream_rx.fifoSize = fifo_size
+    stream_rx.dataFmt = dataFmt_t.LMS_FMT_F32
+    stream_rx.throughputVsLatency = 0.0  # optimize for minimum latency
+
+    return LMS_SetupStream(_c_device, &stream_rx)
+
+cpdef int destroy_stream_rx():
+    """
+    Deallocate memory used for stream.
+    :return: 0 on success, (-1) on failure
+    """
+    LMS_DestroyStream(_c_device, &stream_rx)
+
+cpdef int start_stream_rx():
+    """
+    Start stream
+    :return: 0 on success, (-1) on failure
+    """
+    return LMS_StartStream(&stream_rx)
+
+cpdef int stop_stream_rx():
+    """
+    Stop stream
+    :return: 0 on success, (-1) on failure
+    """
+    return LMS_StopStream(&stream_rx)
+
+cpdef int recv_stream_rx(connection, unsigned num_samples, unsigned timeout_ms):
+    """
+    Read samples from the FIFO of the specified stream.
+    Sample buffer must be big enough to hold requested number of samples.
+
+    :param num_samples: how many samples shall be read from streams FIFO
+    :param connection: multiprocessing connection to send the received samples to
+    :param timeout_ms: how long to wait for data before timing out.
+    :return:
+    """
+    cdef lms_stream_meta_t meta = lms_stream_meta_t(0, False, False)
+    cdef float*buff = <float *> malloc(num_samples * 2 * sizeof(float))
+
+    if not buff:
+        raise MemoryError()
+
+    cdef int received_samples = LMS_RecvStream(&stream_rx, buff, num_samples, &meta, timeout_ms)
+
+    if received_samples > 0:
+        connection.send_bytes(<float[:2*received_samples]>buff)
+    else:
+        logger.warning("LimeSDR: Failed to receive stream")
+
+    free(buff)
+
+cpdef int send_stream_rx(float[::1] samples, unsigned timeout_ms):
+    """
+    Write samples to the FIFO of the specified stream.
+
+    :param samples: sample buffer
+    :param timeout_ms: how long to wait for data before timing out
+    :return: number of samples send on success, (-1) on failure
+    """
+    cdef lms_stream_meta_t meta = lms_stream_meta_t(0, False, False)
+    if len(samples) == 1:
+        samples = np.zeros(1020, dtype=np.float32)
+    cdef size_t sample_count = len(samples) // 2
+
+    if len(samples) > 0:
+        return LMS_SendStream(&stream_rx, &samples[0], sample_count, &meta, timeout_ms)
     else:
         return -1
 
